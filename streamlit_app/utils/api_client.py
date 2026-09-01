@@ -131,8 +131,15 @@ def query_backend(query: str, session_id: str, user_id: str) -> str:
     )
 
     if response.status_code == 200:
-        return response.json()["result"]["content"]
+        body = response.json()
+        # Support both envelope ({"data": {"result": ...}}) and legacy shape
+        data = body.get("data", body)
+        return data["result"]["content"]
     else:
+        body = response.json()
+        if "error" in body:
+            err = body["error"]
+            return f"Error: {err.get('code', 'unknown')} — {err.get('message', response.text)}"
         return f"Error: {response.status_code} - {response.text}"
 
 
@@ -181,7 +188,9 @@ def list_documents(user_id: str) -> list:
             headers={"X-User-ID": user_id},
         )
         if response.status_code == 200:
-            return response.json()["documents"]
+            body = response.json()
+            data = body.get("data", body)
+            return data["documents"]
     except requests.RequestException as e:
         logger.exception("Listing documents failed: %s", e)
     return []

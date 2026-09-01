@@ -52,15 +52,26 @@ export async function requireUserId(): Promise<string> {
 
 async function parseError(response: Response): Promise<never> {
   let detail = `${response.status} ${response.statusText}`;
+  let code = "unknown_error";
   try {
-    const body = (await response.json()) as { detail?: unknown };
-    if (typeof body.detail === "string") {
+    const body = (await response.json()) as {
+      detail?: unknown;
+      error?: { code?: string; message?: string };
+    };
+    // Structured envelope errors
+    if (body.detail && typeof body.detail === "object") {
+      const envelope = body.detail as { error?: { code?: string; message?: string } };
+      if (envelope.error) {
+        code = envelope.error.code ?? code;
+        detail = envelope.error.message ?? detail;
+      }
+    } else if (typeof body.detail === "string") {
       detail = body.detail;
     }
   } catch {
     // keep the status-line fallback
   }
-  throw new BackendError(response.status, detail);
+  throw new BackendError(response.status, `${code}: ${detail}`);
 }
 
 export async function queryRag(
@@ -82,8 +93,13 @@ export async function queryRag(
     await parseError(response);
   }
 
-  const data = (await response.json()) as { result: RagResult };
-  return data.result?.content ?? "The assistant returned an empty response.";
+  const body = (await response.json()) as {
+    data?: { result: RagResult };
+    result?: RagResult;
+  };
+  // Support both envelope (data.result) and legacy (result) shapes
+  const result = body.data?.result ?? body.result;
+  return result?.content ?? "The assistant returned an empty response.";
 }
 
 export async function listDocuments(userId: string): Promise<DocumentInfo[]> {
@@ -99,8 +115,11 @@ export async function listDocuments(userId: string): Promise<DocumentInfo[]> {
     await parseError(response);
   }
 
-  const data = (await response.json()) as { documents: DocumentInfo[] };
-  return data.documents ?? [];
+  const body = (await response.json()) as {
+    data?: { documents: DocumentInfo[] };
+    documents?: DocumentInfo[];
+  };
+  return body.data?.documents ?? body.documents ?? [];
 }
 
 export async function uploadDocument(
@@ -126,8 +145,11 @@ export async function uploadDocument(
     await parseError(response);
   }
 
-  const data = (await response.json()) as { document: DocumentInfo };
-  return data.document;
+  const body = (await response.json()) as {
+    data?: { document: DocumentInfo };
+    document?: DocumentInfo;
+  };
+  return body.data?.document ?? body.document!;
 }
 
 export async function deleteDocument(

@@ -18,7 +18,7 @@ from src.models.grade import Grade
 from src.models.route_identifier import RouteIdentifier
 from src.models.state import State
 from src.rag.reAct_agent import build_agent_executor, build_scoped_retriever_tool
-from src.tools.graph_tools import routing_tool, doc_tool
+from src.tools.graph_tools import routing_tool, doc_tool, verify_answer, verify_route
 
 config = Config()
 logger = logging.getLogger(__name__)
@@ -119,11 +119,14 @@ def retriever_node(state: State):
     """
     Retrieve results from the user's selected documents via a fresh ReAct agent.
 
+    Extracts chunk metadata from intermediate tool-call steps so the graph
+    can carry source citations through to the frontend.
+
     Args:
         state (State): The current state of the graph.
 
     Returns:
-        dict: Updated messages with tool calls.
+        dict: Updated messages with tool calls and sources.
     """
     doc_ids = state.get("doc_ids") or []
     user_id = state.get("user_id") or ""
@@ -154,15 +157,33 @@ def retriever_node(state: State):
             )]
         }
 
-    # Extract tool calls
+    # Extract tool calls and chunk metadata for source citations
     intermediate_steps = result.get("intermediate_steps", [])
     tool_calls = []
+    sources = []
+    seen_sources = set()
+
     if intermediate_steps:
         for action, tool_result in intermediate_steps:
             tool_calls.append({
                 "tool": action.tool,
                 "input": action.tool_input,
             })
+            # tool_result is either a string or a list of Documents
+            if isinstance(tool_result, list):
+                for doc in tool_result:
+                    if hasattr(doc, "metadata"):
+                        meta = doc.metadata
+                        # Deduplicate by (filename, page)
+                        key = (meta.get("source", ""), meta.get("page"))
+                        if key not in seen_sources:
+                            seen_sources.add(key)
+                            sources.append({
+                                "filename": meta.get("source", "Unknown"),
+                                "page": meta.get("page"),
+                                "doc_id": meta.get("doc_id", ""),
+                                "snippet": doc.page_content[:150] if doc.page_content else "",
+                            })
 
     new_message = AIMessage(
         content=result["output"],
@@ -170,7 +191,8 @@ def retriever_node(state: State):
     )
 
     return {
-        "messages": [new_message]
+        "messages": [new_message],
+        "sources": sources,
     }
 
 
@@ -210,9 +232,11 @@ def rewrite_query(state: State):
         state (State): State of the question.
 
     Returns:
-        dict: Updated latest_query.
+        dict: Updated latest_query and incremented rewrite_count.
     """
     query = state["latest_query"]
+    rewrite_count = state.get("rewrite_count") or 0
+
     rewrite_prompt = PromptTemplate(
         template=config.prompt("rewrite_prompt"),
         input_variables=["query"]
@@ -222,7 +246,8 @@ def rewrite_query(state: State):
     logger.debug("rewritten query: %s", result.content)
 
     return {
-        "latest_query": result.content
+        "latest_query": result.content,
+        "rewrite_count": rewrite_count + 1,
     }
 
 
@@ -246,7 +271,10 @@ def generate(state: State):
     generate_chain = generate_prompt | llm
     result = generate_chain.invoke({"context": context})
 
-    return {"messages": [{"role": "assistant", "content": result.content}]}
+    return {
+        "messages": [AIMessage(content=result.content)],
+        "context": context,
+    }
 
 
 def web_search(state: State):
@@ -284,13 +312,16 @@ graph.add_node("rewrite", rewrite_query)
 graph.add_node("web_search", web_search)
 graph.add_node("general_llm", general_llm)
 
+graph.add_node("verify", verify_answer)
+
 graph.add_edge(START, "query_analysis")
 graph.add_edge("web_search", "generate")
 graph.add_edge("retriever", "grade")
 graph.add_edge("rewrite", "retriever")
 graph.add_conditional_edges("query_analysis", routing_tool)
 graph.add_conditional_edges("grade", doc_tool)
-graph.add_edge("generate", END)
+graph.add_edge("generate", "verify")
+graph.add_conditional_edges("verify", verify_route)
 graph.add_edge("general_llm", END)
 
 builder = graph.compile()

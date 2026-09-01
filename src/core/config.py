@@ -44,8 +44,23 @@ class Settings:
     RETRIEVER_K = int(os.getenv("RETRIEVER_K", "4"))
     MAX_DOCS_PER_QUERY = int(os.getenv("MAX_DOCS_PER_QUERY", "20"))
 
+    # ---- LangSmith tracing (optional) ------------------------------------
+    LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false")
+    LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY", "")
+    LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "adaptive-rag")
+    LANGCHAIN_ENDPOINT = os.getenv(
+        "LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com"
+    )
+
 
 settings = Settings()
 
 # Set env variables for LangChain integrations
 os.environ["TAVILY_API_KEY"] = settings.TAVILY_API_KEY
+
+# LangSmith tracing — LangChain/LangGraph auto-trace when these are present
+if settings.LANGCHAIN_TRACING_V2.lower() == "true" and settings.LANGCHAIN_API_KEY:
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
+    os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
+    os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGCHAIN_ENDPOINT

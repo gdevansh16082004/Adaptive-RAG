@@ -65,6 +65,6 @@ prompts:
     question: {question}
     context: {context}
     final answer: {final_answer}
-    Is every part of the final answer supported by the retrieved context? 
+    Is every part of the final answer supported by the retrieved context?
     If yes, faithful=true. If not, faithful=false.
-    Provide a short explanation.
+    Provide a short explanation in JSON format.

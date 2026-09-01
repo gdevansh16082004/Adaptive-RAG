@@ -2,9 +2,10 @@
 Main FastAPI application entry point.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
 from src.api.routes import router
+from src.models.api_response import APIResponse, ErrorDetail
 
 app = FastAPI(title="Adaptive RAG API")
 app.include_router(router)
@@ -13,7 +14,7 @@ app.include_router(router)
 @app.get("/")
 async def root():
     """Root endpoint to verify API is running."""
-    return {"message": "Adaptive RAG API is running"}
+    return APIResponse(data={"message": "Adaptive RAG API is running"})
 
 
 @app.get("/health")
@@ -22,7 +23,7 @@ async def health():
     Health probe for dependent services (Qdrant + MongoDB).
 
     Returns:
-        Per-dependency status; raises 503 when anything is down.
+        Per-dependency status; structured error when anything is down.
     """
     status = {"qdrant": "ok", "mongo": "ok"}
     healthy = True
@@ -46,5 +47,12 @@ async def health():
         healthy = False
 
     if not healthy:
-        raise HTTPException(status_code=503, detail=status)
-    return {"status": "ok", **status}
+        return APIResponse(
+            success=False,
+            data=status,
+            error=ErrorDetail(
+                code="service_degraded",
+                message="One or more backend services are unavailable.",
+            ),
+        )
+    return APIResponse(data={"status": "ok", **status})
